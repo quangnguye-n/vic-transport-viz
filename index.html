@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VIC transport access vs car dependence</title>
+  <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+  <style>
+    :root { --fg:#111; --muted:#666; --card:#fff; --bg:#fafafa; }
+    body { margin:0; font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:var(--bg); }
+    header, main { max-width:1100px; margin:0 auto; padding:20px; }
+    header h1 { margin:0 0 6px; font-size:24px; }
+    header p { margin:0; color:var(--muted); }
+    .stack { display:block; }
+    .card { background:var(--card); border-radius:14px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,.06); margin-bottom:24px; }
+    .card h2 { margin:0 0 8px; font-size:18px; }
+    .caption { margin-top:10px; color:var(--muted); font-size:13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Public transport access vs car dependence in Vicgtoria</h1>
+  </header>
+
+  <main class="stack">
+    <section class="card">
+      <h2>Map - Car share by SA2 (with stop-density filter)</h2>
+      <div id="map"></div>
+      <p class="caption">Data: ABS 2021 (G62/G01) and GTFS stop locations. Use the slider to hide SA2s below a chosen stop density.</p>
+    </section>
+
+    <section class="card">
+      <h2>Stops per km² vs car share</h2>
+      <div id="scatter"></div>
+    </section>
+  </main>
+
+  <script>
+    const CSV_URL  = "https://raw.githubusercontent.com/quangnguye-n/vic-transport-viz/refs/heads/main/sa2_summary.csv";
+    const TOPO_URL = "vic_sa2_2021_simplified.topo.json";
+    const TOPO_FEATURE = "vic_sa2_2021";
+
+    const mapSpec = {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "width": 680, "height": 740,
+      "params": [{ "name": "MinStops", "value": 0,
+        "bind": { "input": "range", "min": 0, "max": 60, "step": 1, "name": "Min stops/km²: " } }],
+      "projection": { "type": "mercator" },
+      "layer": [
+        { "data": { "url": TOPO_URL, "format": { "type": "topojson", "feature": TOPO_FEATURE } },
+          "mark": { "type": "geoshape", "fill": "#f5f5f5", "stroke": "#c7c7c7", "strokeWidth": 0.5 } },
+        { "data": { "url": TOPO_URL, "format": { "type": "topojson", "feature": TOPO_FEATURE } },
+          "transform": [
+            { "lookup": "properties.SA2_CODE21",
+              "from": { "data": { "url": CSV_URL }, "key": "SA2_CODE_2021",
+                "fields": ["SA2_NAME21","car_share","pt_share","stops_count","stops_per_km2","went_to_work_total","region"] } },
+            { "filter": "isValid(datum.car_share) && isValid(datum.stops_per_km2)" },
+            { "filter": "datum.stops_per_km2 >= MinStops" }
+          ],
+          "mark": { "type": "geoshape", "stroke": "white", "strokeWidth": 0.3 },
+          "encoding": {
+            "color": { "field": "car_share", "type": "quantitative", "title": "Car share", "scale": { "scheme": "orangered" } },
+            "tooltip": [
+              { "field": "SA2_NAME21", "title": "SA2" },
+              { "field": "car_share", "title": "Car share", "format": ".1%" },
+              { "field": "pt_share", "title": "PT share", "format": ".1%" },
+              { "field": "stops_per_km2", "title": "Stops / km²", "format": ".1f" },
+              { "field": "stops_count", "title": "PT stops (count)", "format": ",d" },
+              { "field": "went_to_work_total", "title": "Workers (denominator)", "format": ",d" }
+            ]
+          } },
+        { "data": { "values": [ { "label": "Inner Melbourne: more stops → lower car share", "lon": 144.9631, "lat": -39.40 } ] },
+          "mark": { "type": "text", "fontSize": 10, "align": "center", "fill": "#000" },
+          "encoding": { "text": { "field": "label" }, "longitude": { "field": "lon" }, "latitude": { "field": "lat" } } },
+        { "data": { "values": [ { "lon": 144.9631, "lat": -39.40 }, { "lon": 144.9631, "lat": -37.8136 } ] },
+          "mark": { "type": "line", "stroke": "#000", "strokeWidth": 1.2 },
+          "encoding": { "longitude": { "field": "lon" }, "latitude": { "field": "lat" } } },
+        { "mark": { "type": "text", "align": "left", "x": 10, "y": 20, "fontSize": 11, "fill": "#444" },
+          "encoding": { "text": { "expr": "'Filter: stops/km² ≥ ' + MinStops" } } }
+      ]
+    };
+
+    const scatterSpec = {
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "width": 680,
+    "height": 420,
+    "data": {
+        "url": CSV_URL,
+        "format": {"type": "csv"},
+        "parse": { "stops_per_km2": "number", "car_share": "number" }
+    },
+    "transform": [
+        { "filter": "isValid(datum.stops_per_km2) && isValid(datum.car_share)" }
+    ],
+    "layer": [
+        {
+        "params": [
+            { "name": "regionPick", "select": { "type": "point", "fields": ["region"] }, "bind": "legend" }
+        ],
+        "mark": { "type": "point", "filled": true, "opacity": 0.7, "size": 60 },
+        "encoding": {
+            "x": { "field": "stops_per_km2", "type": "quantitative", "title": "PT stops per km²", "scale": { "nice": true } },
+            "y": { "field": "car_share", "type": "quantitative", "title": "Car share", "axis": { "format": "%" } },
+            "color": { "field": "region", "type": "nominal", "title": "Region" },
+            "opacity": { "condition": { "param": "regionPick", "value": 0.9 }, "value": 0.15 },
+            "tooltip": [
+            { "field": "SA2_NAME21", "type": "nominal", "title": "SA2" },
+            { "field": "stops_per_km2", "type": "quantitative", "format": ".1f" },
+            { "field": "car_share", "type": "quantitative", "format": ".0%" }
+            ]
+        }
+        },
+        {
+        "transform": [
+            {
+            "aggregate": [
+                { "op": "median", "field": "stops_per_km2", "as": "mx" },
+                { "op": "median", "field": "car_share", "as": "my" }
+            ]
+            }
+        ],
+        "layer": [
+            { "mark": { "type": "rule", "strokeDash": [4, 4] }, "encoding": { "x": { "field": "mx" } } },
+            { "mark": { "type": "rule", "strokeDash": [4, 4] }, "encoding": { "y": { "field": "my" } } }
+        ]
+        }
+    ]
+    };
+
+    const embedOpts = { actions: false, tooltip: { theme: "dark" } };
+    vegaEmbed("#map", mapSpec, embedOpts);
+    vegaEmbed("#scatter", scatterSpec, embedOpts);
+  </script>
+</body>
+</html>
